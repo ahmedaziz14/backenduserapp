@@ -1,0 +1,28 @@
+{
+  "name": "supabase",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.48.1",
+    "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "path": "^0.12.7",
+    "postgres": "^3.4.5",
+    "sharp": "^0.33.5",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "uuid": "^11.0.5"
+  }
+}
