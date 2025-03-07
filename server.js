@@ -2,18 +2,18 @@ require('dotenv').config();
 const http = require("http");
 const { Server } = require("socket.io");
 const jwt = require('jsonwebtoken');
-const app = require("./app");
+const app = require("./app"); // Assurez-vous que app.js existe et inclut chatRoutes
 const supabase = require("./config/supabase");
-const chatRoutes = require("./routes/chatRoutes");
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // Ajuste selon ton frontend
+    origin: "*", // Ajuste selon ton frontend, ex: 'http://localhost:19006' pour Expo
     methods: ['GET', 'POST'],
   },
 });
 
+// Middleware d'authentification pour Socket.IO
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) {
@@ -29,24 +29,12 @@ io.use((socket, next) => {
   }
 });
 
+// WebSocket
 io.on("connection", async (socket) => {
   console.log("✅ Utilisateur connecté :", socket.user.id);
+  socket.join(socket.user.id); // L’utilisateur rejoint sa propre salle immédiatement
 
-  const { data: profile, error } = await supabase
-    .from('user_profiles')
-    .select('admin_id')
-    .eq('id', socket.user.id)
-    .single();
-
-  if (error || !profile.admin_id) {
-    console.error('No admin_id found for user:', socket.user.id, error);
-    socket.disconnect();
-    return;
-  }
-
-  const admin_id = profile.admin_id;
-  socket.join(socket.user.id);
-
+  // Gestion des notifications existantes
   socket.on("join", (userId) => {
     socket.join(userId);
     console.log(`Utilisateur ${userId} a rejoint sa room`);
@@ -67,22 +55,28 @@ io.on("connection", async (socket) => {
     io.emit("notification-deleted", notificationId);
   });
 
-  socket.on("sendMessage", ({ message }) => {
-    console.log(`Message from user ${socket.user.id} to admin ${admin_id}: ${message}`);
-    io.to(admin_id).emit('receiveMessage', {
-      sender_id: socket.user.id,
-      receiver_id: admin_id,
-      message,
-      is_admin: false,
-      created_at: new Date().toISOString(),
-    });
-  });
-
   socket.on("disconnect", () => {
     console.log("❌ Utilisateur déconnecté :", socket.user.id);
   });
 });
 
+// Écoute des nouveaux messages dans la table messages
+supabase
+  .channel("messages-channel")
+  .on(
+    "postgres_changes",
+    { event: "INSERT", schema: "public", table: "messages" },
+    (payload) => {
+      const newMessage = payload.new;
+      console.log("🔔 Nouveau message détecté dans Supabase :", newMessage);
+      io.to(newMessage.receiver_id).emit("receiveMessage", newMessage); // Envoie à l’utilisateur ou admin
+    }
+  )
+  .subscribe((status) => {
+    console.log("📡 Statut de l'abonnement Supabase pour messages :", status);
+  });
+
+// Écoute des insertions dans la table notifications
 supabase
   .channel("notifications-channel")
   .on(
@@ -98,6 +92,7 @@ supabase
     console.log("📡 Statut de l'abonnement Supabase pour notifications :", status);
   });
 
+// Écoute des insertions dans la table localisations
 supabase
   .channel("localisations-channel")
   .on(
@@ -114,7 +109,6 @@ supabase
   });
 
 app.set("io", io);
-app.use('/chat', chatRoutes);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

@@ -8,6 +8,7 @@ const productKeyRoutes = require('./routes/productKey');
 const notificationRoutes = require("./routes/notificationRoutes");
 const locationRoutes = require("./routes/locationRoutes");
 const ParameterRoutes=require("./routes/parameteerRoutes") ; 
+const chatRoutes = require('./routes/chatRoutes');
 const app = express();
 
 app.use(cors());
@@ -20,4 +21,5 @@ app.use('/user', userRoutes);
 app.use("/notifications", notificationRoutes);
 app.use("/locations" , locationRoutes) ; 
 app.use('/settings',ParameterRoutes) ; 
+app.use('/chat', chatRoutes)
 module.exports = app;
