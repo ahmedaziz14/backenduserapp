@@ -1,19 +1,48 @@
 require('dotenv').config();
-const http = require("http");
-const { Server } = require("socket.io");
+const http = require('http');
+const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const app = require("./app"); // Assurez-vous que app.js existe et inclut chatRoutes
-const supabase = require("./config/supabase");
+const app = require('./app');
+const supabase = require('./config/supabase');
+const crypto = require('crypto'); // Ajout de crypto pour déchiffrement
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // Ajuste selon ton frontend, ex: 'http://localhost:19006' pour Expo
+    origin: '*',
     methods: ['GET', 'POST'],
   },
 });
 
-// Middleware d'authentification pour Socket.IO
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Clé de 256 bits (32 bytes hex)
+const IV_LENGTH = 16; // Longueur du vecteur d'initialisation
+
+// Fonction de déchiffrement AES-256-CBC
+function decrypt(encryptedText) {
+  try {
+    if (!encryptedText || encryptedText.length < IV_LENGTH * 2) {
+      throw new Error('Encrypted text is too short or missing IV');
+    }
+
+    const ivHex = encryptedText.substring(0, IV_LENGTH * 2);
+    const encrypted = encryptedText.substring(IV_LENGTH * 2);
+    const iv = Buffer.from(ivHex, 'hex');
+
+    if (iv.length !== IV_LENGTH) {
+      throw new Error(`Invalid IV length: expected ${IV_LENGTH}, got ${iv.length}`);
+    }
+
+    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+
+    return decrypted;
+  } catch (error) {
+    console.error('Decryption error:', error.message);
+    return '[ERROR]';
+  }
+}
+
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) {
@@ -29,86 +58,89 @@ io.use((socket, next) => {
   }
 });
 
-// WebSocket
-io.on("connection", async (socket) => {
-  console.log("✅ Utilisateur connecté :", socket.user.id);
-  socket.join(socket.user.id); // L’utilisateur rejoint sa propre salle immédiatement
+io.on('connection', async (socket) => {
+  console.log('✅ Utilisateur connecté :', socket.user.id);
+  socket.join(socket.user.id);
 
-  // Gestion des notifications existantes
-  socket.on("join", (userId) => {
+  socket.on('join', (userId) => {
     socket.join(userId);
     console.log(`Utilisateur ${userId} a rejoint sa room`);
   });
 
-  socket.on("mark-notification-as-read", (notificationId) => {
-    console.log("🔖 Notification marquée comme lue:", notificationId);
-    io.emit("notification-marked-as-read", notificationId);
+  socket.on('mark-notification-as-read', (notificationId) => {
+    console.log('🔖 Notification marquée comme lue:', notificationId);
+    io.emit('notification-marked-as-read', notificationId);
   });
 
-  socket.on("new-notification", (notification) => {
-    console.log("📢 Nouvelle notification envoyée:", notification);
-    io.to(notification.user_id).emit("new-notification", notification);
+  socket.on('new-notification', (notification) => {
+    console.log('📢 Nouvelle notification envoyée:', notification);
+    io.to(notification.user_id).emit('new-notification', notification);
   });
 
-  socket.on("notification-deleted", (notificationId) => {
-    console.log("🗑️ Notification supprimée:", notificationId);
-    io.emit("notification-deleted", notificationId);
+  socket.on('notification-deleted', (notificationId) => {
+    console.log('🗑️ Notification supprimée:', notificationId);
+    io.emit('notification-deleted', notificationId);
   });
 
-  socket.on("disconnect", () => {
-    console.log("❌ Utilisateur déconnecté :", socket.user.id);
+  socket.on('disconnect', () => {
+    console.log('❌ Utilisateur déconnecté :', socket.user.id);
   });
 });
 
 // Écoute des nouveaux messages dans la table messages
 supabase
-  .channel("messages-channel")
+  .channel('messages-channel')
   .on(
-    "postgres_changes",
-    { event: "INSERT", schema: "public", table: "messages" },
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'messages' },
     (payload) => {
       const newMessage = payload.new;
-      console.log("🔔 Nouveau message détecté dans Supabase :", newMessage);
-      io.to(newMessage.receiver_id).emit("receiveMessage", newMessage); // Envoie à l’utilisateur ou admin
+      console.log('🔔 Nouveau message brut :', newMessage);
+      // Déchiffrer le message avant de l'envoyer
+      const decryptedMessage = {
+        ...newMessage,
+        message: decrypt(newMessage.message),
+      };
+      console.log('🔔 Nouveau message déchiffré :', decryptedMessage);
+      io.to(newMessage.receiver_id).emit('receiveMessage', decryptedMessage);
     }
   )
   .subscribe((status) => {
-    console.log("📡 Statut de l'abonnement Supabase pour messages :", status);
+    console.log('📡 Statut de l\'abonnement Supabase pour messages :', status);
   });
 
-// Écoute des insertions dans la table notifications
+// Écoute des notifications et localisations (inchangées)
 supabase
-  .channel("notifications-channel")
+  .channel('notifications-channel')
   .on(
-    "postgres_changes",
-    { event: "INSERT", schema: "public", table: "notifications" },
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'notifications' },
     (payload) => {
       const newNotification = payload.new;
-      console.log("🔔 Nouvelle notification détectée dans Supabase :", newNotification);
-      io.to(newNotification.user_id).emit("new-notification", newNotification);
+      console.log('🔔 Nouvelle notification détectée dans Supabase :', newNotification);
+      io.to(newNotification.user_id).emit('new-notification', newNotification);
     }
   )
   .subscribe((status) => {
-    console.log("📡 Statut de l'abonnement Supabase pour notifications :", status);
+    console.log('📡 Statut de l\'abonnement Supabase pour notifications :', status);
   });
 
-// Écoute des insertions dans la table localisations
 supabase
-  .channel("localisations-channel")
+  .channel('localisations-channel')
   .on(
-    "postgres_changes",
-    { event: "INSERT", schema: "public", table: "localisations" },
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'localisations' },
     (payload) => {
       const newLocation = payload.new;
-      console.log("📍 Nouvelle localisation détectée dans Supabase :", newLocation);
-      io.to(newLocation.user_id).emit("new-location", newLocation);
+      console.log('📍 Nouvelle localisation détectée dans Supabase :', newLocation);
+      io.to(newLocation.user_id).emit('new-location', newLocation);
     }
   )
   .subscribe((status) => {
-    console.log("📡 Statut de l'abonnement Supabase pour localisations :", status);
+    console.log('📡 Statut de l\'abonnement Supabase pour localisations :', status);
   });
 
-app.set("io", io);
+app.set('io', io);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
