@@ -50,6 +50,7 @@ const sendMessage = async (req, res) => {
   }
 
   try {
+    // Récupérer l'admin associé à cet utilisateur
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
       .select('admin_id')
@@ -61,8 +62,9 @@ const sendMessage = async (req, res) => {
     }
 
     const receiver_id = profile.admin_id;
-    const encryptedMessage = encrypt(message); // Chiffré pour la base
+    const encryptedMessage = encrypt(message); // Chiffrement du message
 
+    // Insérer le message chiffré dans Supabase
     const { data, error } = await supabase
       .from('messages')
       .insert([{ sender_id, receiver_id, message: encryptedMessage, is_admin: false }])
@@ -77,11 +79,12 @@ const sendMessage = async (req, res) => {
       id: data.id,
       sender_id,
       receiver_id,
-      message, // En clair, PAS encryptedMessage
+      message, // On envoie le message en clair au frontend
       is_admin: false,
       created_at: data.created_at,
     };
 
+    // Envoi via WebSocket
     const io = req.app.get('io');
     io.to(receiver_id).emit('receiveMessage', messageData);
     io.to(sender_id).emit('receiveMessage', messageData);
